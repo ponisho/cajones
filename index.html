@@ -806,8 +806,9 @@
     _confirmCallback = null;
   }
   function doConfirm() {
-    closeConfirmModal();
-    if (_confirmCallback) _confirmCallback();
+    const cb = _confirmCallback;   // guarda ref ANTES de limpiar
+    closeConfirmModal();            // esto pone _confirmCallback = null
+    if (cb) cb();                   // ejecuta con la ref guardada
   }
 
   // ─── VIEWS ───────────────────────────────────────────────────────────────
