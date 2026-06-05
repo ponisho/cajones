@@ -301,6 +301,7 @@
 </head>
 <body>
 
+<div id="loadingBar" style="position:fixed;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#e8c547,#5b8dff);z-index:999;opacity:0;transition:opacity 0.3s;"></div>
 <header>
   <div class="header-top">
     <div>
@@ -447,62 +448,67 @@
 
 <div class="toast" id="toast"></div>
 
-<script>
-  // ─── STORAGE (safe: works everywhere — Safari, file://, iCloud, Claude viewer)
-  let _memStore = {};
-  let _lsAvailable = (function() {
-    try { localStorage.setItem('__t__','1'); localStorage.removeItem('__t__'); return true; }
-    catch(e) { return false; }
-  })();
-  const store = {
-    get(k)    { if (_lsAvailable) try { return localStorage.getItem(k); } catch(e){} return _memStore[k]||null; },
-    set(k, v) { if (_lsAvailable) try { localStorage.setItem(k,v); return; } catch(e){} _memStore[k]=v; }
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  // ─── FIREBASE ────────────────────────────────────────────────────────────
+  const firebaseConfig = {
+    apiKey: "AIzaSyCZc9-Vyum_AHZbifRIOk3tHPZ9_TFi7-E",
+    authDomain: "cajonesbambu.firebaseapp.com",
+    projectId: "cajonesbambu",
+    storageBucket: "cajonesbambu.firebasestorage.app",
+    messagingSenderId: "137120786645",
+    appId: "1:137120786645:web:cfea641a8324cd35c99a5c"
   };
+  const app = initializeApp(firebaseConfig);
+  const db  = getFirestore(app);
+  const colRef = collection(db, 'reservas');
 
   // ─── DATA ────────────────────────────────────────────────────────────────
-  let reservas = JSON.parse(store.get('cajones_reservas') || '[]');
+  let reservas = [];
   let selectedCajon = null;
   let currentWeekOffset = 0;
   let selectedDate = null;
+  const cajonNames = { 1: 'C-1', 2: 'C-2', 3: 'C-3' };
 
-  const cajonColors = { 1: 'cajon1', 2: 'cajon2', 3: 'cajon3' };
-  const cajonNames  = { 1: 'C-1',    2: 'C-2',    3: 'C-3'    };
+  // Escucha en tiempo real — cualquier cambio en Firestore actualiza la UI
+  const q = query(colRef, orderBy('fecha'), orderBy('desde'));
+  onSnapshot(q, (snapshot) => {
+    reservas = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderAll();
+    hideLoading();
+  }, (err) => {
+    console.error(err);
+    showToast('⚠️ Error al conectar con Firebase');
+    hideLoading();
+  });
 
-  function save() {
-    store.set('cajones_reservas', JSON.stringify(reservas));
-  }
+  // ─── LOADING ─────────────────────────────────────────────────────────────
+  function showLoading() { document.getElementById('loadingBar').style.opacity = '1'; }
+  function hideLoading() { document.getElementById('loadingBar').style.opacity = '0'; }
 
   // ─── DATE UTILS ──────────────────────────────────────────────────────────
-  function today() {
-    const d = new Date();
-    return toISO(d);
-  }
-  function toISO(d) {
-    return d.toISOString().split('T')[0];
-  }
+  function today() { return toISO(new Date()); }
+  function toISO(d) { return d.toISOString().split('T')[0]; }
   function addDays(iso, n) {
     const d = new Date(iso + 'T12:00:00');
     d.setDate(d.getDate() + n);
     return toISO(d);
   }
-  function parseDate(iso) {
-    return new Date(iso + 'T12:00:00');
-  }
+  function parseDate(iso) { return new Date(iso + 'T12:00:00'); }
   function formatDate(iso) {
-    const d = parseDate(iso);
-    return d.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' });
+    return parseDate(iso).toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' });
   }
   function formatShort(iso) {
-    const d = parseDate(iso);
-    return d.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+    return parseDate(iso).toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
   }
-  const days = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+  const days   = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
   const months = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
   function getWeekStart(offset) {
     const d = new Date();
-    const day = d.getDay();
-    d.setDate(d.getDate() - day + (offset * 7));
+    d.setDate(d.getDate() - d.getDay() + offset * 7);
     return toISO(d);
   }
 
@@ -513,19 +519,16 @@
     const timeNow = now.getHours() * 60 + now.getMinutes();
     const grid = document.getElementById('cajonesGrid');
     grid.innerHTML = '';
-
     for (let c = 1; c <= 3; c++) {
       const activa = reservas.find(r => {
         if (r.fecha !== isoNow || r.cajon !== c) return false;
         const [sh, sm] = r.desde.split(':').map(Number);
         const [eh, em] = r.hasta.split(':').map(Number);
-        const start = sh * 60 + sm, end = eh * 60 + em;
-        return timeNow >= start && timeNow <= end;
+        return timeNow >= sh*60+sm && timeNow <= eh*60+em;
       });
       const libre = !activa;
-      const colorClass = `c${c}`;
       grid.innerHTML += `
-        <div class="cajon-card ${colorClass}">
+        <div class="cajon-card c${c}">
           <div class="cajon-num">CAJÓN ${c}</div>
           <div>
             <span class="cajon-status-dot ${libre ? 'libre' : 'ocupado'}"></span>
@@ -551,14 +554,14 @@
 
     for (let i = 0; i < 7; i++) {
       const iso = addDays(weekStart, i);
-      const d = parseDate(iso);
-      const dayReservas = reservas.filter(r => r.fecha === iso);
+      const d   = parseDate(iso);
+      const dr  = reservas.filter(r => r.fecha === iso);
       const dots = [1,2,3].map(c => {
-        const has = dayReservas.some(r => r.cajon === c);
-        const colors = { 1: '#5b8dff', 2: '#e8c547', 3: '#7ecfa4' };
-        return has ? `<div class="day-dot" style="background:${colors[c]}"></div>` : '';
+        const colors = { 1:'#5b8dff', 2:'#e8c547', 3:'#7ecfa4' };
+        return dr.some(r => r.cajon === c)
+          ? `<div class="day-dot" style="background:${colors[c]}"></div>` : '';
       }).join('');
-      const isToday = iso === todayISO;
+      const isToday    = iso === todayISO;
       const isSelected = iso === selectedDate;
       grid.innerHTML += `
         <div class="day-col" onclick="selectDay('${iso}')">
@@ -570,61 +573,41 @@
     renderDayReservas();
   }
 
-  function selectDay(iso) {
-    selectedDate = iso;
-    renderCalendar();
-  }
-
-  function changeWeek(dir) {
-    currentWeekOffset += dir;
-    renderCalendar();
-  }
+  window.selectDay = function(iso) { selectedDate = iso; renderCalendar(); };
+  window.changeWeek = function(dir) { currentWeekOffset += dir; renderCalendar(); };
 
   function renderDayReservas() {
-    const label = document.getElementById('selectedDayLabel');
+    const label     = document.getElementById('selectedDayLabel');
     const container = document.getElementById('dayReservas');
     if (!selectedDate) return;
     label.textContent = formatDate(selectedDate);
-    const dr = reservas
-      .filter(r => r.fecha === selectedDate)
-      .sort((a, b) => a.desde.localeCompare(b.desde));
-    if (dr.length === 0) {
-      container.innerHTML = `<div class="empty-state"><div class="empty-icon">🅿️</div>Sin reservas este día</div>`;
-      return;
-    }
-    container.innerHTML = dr.map(r => reservaCard(r)).join('');
+    const dr = reservas.filter(r => r.fecha === selectedDate)
+                       .sort((a,b) => a.desde.localeCompare(b.desde));
+    container.innerHTML = dr.length === 0
+      ? `<div class="empty-state"><div class="empty-icon">🅿️</div>Sin reservas este día</div>`
+      : dr.map(reservaCard).join('');
   }
 
   // ─── LIST VIEW ───────────────────────────────────────────────────────────
   function renderLista() {
     const container = document.getElementById('listaContent');
-    const todayISO = today();
-    const upcoming = reservas
-      .filter(r => r.fecha >= todayISO)
-      .sort((a, b) => a.fecha.localeCompare(b.fecha) || a.desde.localeCompare(b.desde));
-    const past = reservas
-      .filter(r => r.fecha < todayISO)
-      .sort((a, b) => b.fecha.localeCompare(a.fecha));
-
+    const todayISO  = today();
+    const upcoming  = reservas.filter(r => r.fecha >= todayISO);
+    const past      = reservas.filter(r => r.fecha <  todayISO).reverse();
     let html = '';
-    if (upcoming.length === 0 && past.length === 0) {
+    if (!upcoming.length && !past.length) {
       html = `<div class="empty-state"><div class="empty-icon">📋</div>No hay reservas todavía</div>`;
     } else {
-      if (upcoming.length > 0) {
-        html += `<div class="list-group"><div class="list-group-label">Próximas</div>${upcoming.map(reservaCard).join('')}</div>`;
-      }
-      if (past.length > 0) {
-        html += `<div class="list-group" style="opacity:0.5"><div class="list-group-label">Pasadas</div>${past.map(reservaCard).join('')}</div>`;
-      }
+      if (upcoming.length) html += `<div class="list-group"><div class="list-group-label">Próximas</div>${upcoming.map(reservaCard).join('')}</div>`;
+      if (past.length)     html += `<div class="list-group" style="opacity:0.5"><div class="list-group-label">Pasadas</div>${past.map(reservaCard).join('')}</div>`;
     }
     container.innerHTML = html;
   }
 
   function reservaCard(r) {
-    const c = r.cajon;
     return `
       <div class="reserva-card">
-        <div class="reserva-cajon-badge badge-c${c}">${cajonNames[c]}</div>
+        <div class="reserva-cajon-badge badge-c${r.cajon}">${cajonNames[r.cajon]}</div>
         <div class="reserva-info">
           <div class="reserva-vecino">${r.vecino}</div>
           <div class="reserva-horario">${formatShort(r.fecha)} · ${r.desde}–${r.hasta}</div>
@@ -634,165 +617,143 @@
       </div>`;
   }
 
-  // ─── MODAL ───────────────────────────────────────────────────────────────
-  function openModal(prefillDate) {
+  // ─── MODAL NUEVA RESERVA ─────────────────────────────────────────────────
+  window.openModal = function(prefillDate) {
     selectedCajon = null;
     document.getElementById('inputVecino').value = '';
-    document.getElementById('inputFecha').value = prefillDate || today();
-    document.getElementById('inputDesde').value = '';
-    document.getElementById('inputHasta').value = '';
-    document.getElementById('inputNota').value = '';
+    document.getElementById('inputFecha').value  = prefillDate || today();
+    document.getElementById('inputDesde').value  = '';
+    document.getElementById('inputHasta').value  = '';
+    document.getElementById('inputNota').value   = '';
     document.querySelectorAll('.cajon-opt').forEach(b => b.className = 'cajon-opt');
     document.getElementById('modalOverlay').classList.add('open');
-  }
-  function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
-  function closeModalOnBg(e) { if (e.target.id === 'modalOverlay') closeModal(); }
+  };
+  window.closeModal = function() { document.getElementById('modalOverlay').classList.remove('open'); };
+  window.closeModalOnBg = function(e) { if (e.target.id === 'modalOverlay') window.closeModal(); };
 
-  function selectCajon(n, el) {
+  window.selectCajon = function(n, el) {
     selectedCajon = n;
     document.querySelectorAll('.cajon-opt').forEach(b => b.className = 'cajon-opt');
     el.className = `cajon-opt selected-c${n}`;
-  }
+  };
 
-  function guardarReserva() {
+  window.guardarReserva = async function() {
     const vecino = document.getElementById('inputVecino').value.trim();
-    const fecha = document.getElementById('inputFecha').value;
-    const desde = document.getElementById('inputDesde').value;
-    const hasta = document.getElementById('inputHasta').value;
-    const nota = document.getElementById('inputNota').value.trim();
+    const fecha  = document.getElementById('inputFecha').value;
+    const desde  = document.getElementById('inputDesde').value;
+    const hasta  = document.getElementById('inputHasta').value;
+    const nota   = document.getElementById('inputNota').value.trim();
 
-    if (!selectedCajon) { showToast('⚠️ Selecciona un cajón'); return; }
-    if (!vecino) { showToast('⚠️ Selecciona una casa'); return; }
-    if (!fecha) { showToast('⚠️ Selecciona la fecha'); return; }
-    if (!desde || !hasta) { showToast('⚠️ Ingresa el horario'); return; }
-    if (desde >= hasta) { showToast('⚠️ El horario es inválido'); return; }
+    if (!selectedCajon)      { showToast('⚠️ Selecciona un cajón');   return; }
+    if (!vecino)             { showToast('⚠️ Selecciona una casa');    return; }
+    if (!fecha)              { showToast('⚠️ Selecciona la fecha');    return; }
+    if (!desde || !hasta)    { showToast('⚠️ Ingresa el horario');     return; }
+    if (desde >= hasta)      { showToast('⚠️ El horario es inválido'); return; }
 
-    // Verificar conflicto
     const conflicto = reservas.find(r => {
       if (r.cajon !== selectedCajon || r.fecha !== fecha) return false;
       return desde < r.hasta && hasta > r.desde;
     });
-    if (conflicto) {
-      showToast(`⚠️ C-${selectedCajon} ya está reservado en ese horario`);
-      return;
-    }
+    if (conflicto) { showToast(`⚠️ C-${selectedCajon} ya está reservado`); return; }
 
-    reservas.push({
-      id: Date.now().toString(),
-      cajon: selectedCajon, vecino, fecha, desde, hasta, nota
-    });
-    save();
-    closeModal();
-    renderAll();
-    showToast(`✓ Reserva guardada para ${vecino}`);
-  }
+    try {
+      showLoading();
+      await addDoc(colRef, { cajon: selectedCajon, vecino, fecha, desde, hasta, nota });
+      window.closeModal();
+      showToast(`✓ Reserva guardada para ${vecino}`);
+    } catch(e) {
+      console.error(e);
+      showToast('⚠️ Error al guardar');
+    } finally {
+      hideLoading();
+    }
+  };
 
   // ─── PIN / ADMIN ─────────────────────────────────────────────────────────
-  const ADMIN_PIN = '1234'; // ← Cambia este PIN
-  const ADMIN_TIMEOUT = 5 * 60 * 1000; // 5 minutos de sesión
-  let isAdmin = false;
+  const ADMIN_PIN     = '1234'; // ← Cambia este PIN
+  const ADMIN_TIMEOUT = 5 * 60 * 1000;
+  let isAdmin    = false;
   let adminTimer = null;
-  let pinBuffer = '';
-  let pinAction = null; // función a ejecutar si el PIN es correcto
+  let pinBuffer  = '';
+  let pinAction  = null;
 
   function setAdminSession(val) {
     isAdmin = val;
     const badge = document.getElementById('adminBadge');
     if (val) {
       badge.textContent = '🔓 Admin';
-      badge.style.background = '#7ecfa418';
-      badge.style.borderColor = '#7ecfa440';
-      badge.style.color = '#7ecfa4';
+      badge.style.cssText = 'background:#7ecfa418;border-color:#7ecfa440;color:#7ecfa4;';
       clearTimeout(adminTimer);
-      adminTimer = setTimeout(() => {
-        setAdminSession(false);
-        showToast('Sesión admin cerrada');
-      }, ADMIN_TIMEOUT);
+      adminTimer = setTimeout(() => { setAdminSession(false); showToast('Sesión admin cerrada'); }, ADMIN_TIMEOUT);
     } else {
       badge.textContent = '🔒 Admin';
-      badge.style.background = '#e8c54718';
-      badge.style.borderColor = '#e8c54740';
-      badge.style.color = 'var(--accent)';
+      badge.style.cssText = 'background:#e8c54718;border-color:#e8c54740;color:var(--accent);';
     }
   }
 
-  function handleAdminBadge() {
-    if (isAdmin) {
-      setAdminSession(false);
-      showToast('Sesión admin cerrada');
-    } else {
-      openPinModal(() => { showToast('✓ Modo admin activado (5 min)'); });
-    }
-  }
+  window.handleAdminBadge = function() {
+    if (isAdmin) { setAdminSession(false); showToast('Sesión admin cerrada'); }
+    else openPinModal(() => showToast('✓ Modo admin activado (5 min)'));
+  };
 
   function openPinModal(onSuccess) {
-    pinBuffer = '';
-    pinAction = onSuccess;
+    pinBuffer = ''; pinAction = onSuccess;
     updatePinDots();
     document.getElementById('pinOverlay').classList.add('open');
   }
-
-  function closePinModal() {
+  window.closePinModal = function() {
     document.getElementById('pinOverlay').classList.remove('open');
-    pinBuffer = '';
-    pinAction = null;
-  }
-
-  function pinKey(k) {
+    pinBuffer = ''; pinAction = null;
+  };
+  window.pinKey = function(k) {
     if (pinBuffer.length >= 4) return;
-    pinBuffer += k;
-    updatePinDots();
-    if (pinBuffer.length === 4) {
-      setTimeout(checkPin, 150);
-    }
-  }
-
-  function pinClear() {
-    pinBuffer = pinBuffer.slice(0, -1);
-    updatePinDots();
-  }
+    pinBuffer += k; updatePinDots();
+    if (pinBuffer.length === 4) setTimeout(checkPin, 150);
+  };
+  window.pinClear = function() { pinBuffer = pinBuffer.slice(0,-1); updatePinDots(); };
 
   function updatePinDots() {
     for (let i = 0; i < 4; i++) {
-      const dot = document.getElementById('pd' + i);
-      dot.classList.remove('filled', 'error');
+      const dot = document.getElementById('pd'+i);
+      dot.classList.remove('filled','error');
       if (i < pinBuffer.length) dot.classList.add('filled');
     }
   }
-
   function checkPin() {
     if (pinBuffer === ADMIN_PIN) {
       setAdminSession(true);
-      closePinModal();
+      window.closePinModal();
       if (pinAction) pinAction();
       renderAll();
     } else {
-      for (let i = 0; i < 4; i++) {
-        const dot = document.getElementById('pd' + i);
-        dot.classList.remove('filled');
-        dot.classList.add('error');
+      for (let i=0;i<4;i++) {
+        const dot = document.getElementById('pd'+i);
+        dot.classList.remove('filled'); dot.classList.add('error');
       }
       showToast('⚠️ PIN incorrecto');
-      setTimeout(() => {
-        pinBuffer = '';
-        updatePinDots();
-      }, 800);
+      setTimeout(() => { pinBuffer = ''; updatePinDots(); }, 800);
     }
   }
 
-  function deleteReserva(id) {
+  // ─── DELETE ──────────────────────────────────────────────────────────────
+  window.deleteReserva = function(id) {
     if (!isAdmin) {
-      openPinModal(() => { setTimeout(() => deleteReserva(id), 200); });
+      openPinModal(() => setTimeout(() => window.deleteReserva(id), 200));
       return;
     }
-    // Modal de confirmación propio (sin confirm() nativo que Safari bloquea)
-    openConfirmModal('¿Eliminar esta reserva?', () => {
-      reservas = reservas.filter(r => r.id !== id);
-      save();
-      renderAll();
-      showToast('Reserva eliminada');
+    openConfirmModal('¿Eliminar esta reserva?', async () => {
+      try {
+        showLoading();
+        await deleteDoc(doc(db, 'reservas', id));
+        showToast('Reserva eliminada');
+      } catch(e) {
+        console.error(e);
+        showToast('⚠️ Error al eliminar');
+      } finally {
+        hideLoading();
+      }
     });
-  }
+  };
 
   // ─── CONFIRM MODAL ───────────────────────────────────────────────────────
   let _confirmCallback = null;
@@ -801,51 +762,44 @@
     document.getElementById('confirmMsg').textContent = msg;
     document.getElementById('confirmOverlay').classList.add('open');
   }
-  function closeConfirmModal() {
+  window.closeConfirmModal = function() {
     document.getElementById('confirmOverlay').classList.remove('open');
     _confirmCallback = null;
-  }
-  function doConfirm() {
-    const cb = _confirmCallback;   // guarda ref ANTES de limpiar
-    closeConfirmModal();            // esto pone _confirmCallback = null
-    if (cb) cb();                   // ejecuta con la ref guardada
-  }
+  };
+  window.doConfirm = function() {
+    const cb = _confirmCallback;
+    window.closeConfirmModal();
+    if (cb) cb();
+  };
 
   // ─── VIEWS ───────────────────────────────────────────────────────────────
-  function switchView(name, btn) {
+  window.switchView = function(name, btn) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
-    document.getElementById('view-' + name).classList.add('active');
+    document.getElementById('view-'+name).classList.add('active');
     btn.classList.add('active');
     if (name === 'lista') renderLista();
-  }
+  };
 
   function renderAll() {
     renderCajones();
     renderCalendar();
-    const lista = document.getElementById('view-lista');
-    if (lista.classList.contains('active')) renderLista();
+    if (document.getElementById('view-lista').classList.contains('active')) renderLista();
   }
 
   // ─── TOAST ───────────────────────────────────────────────────────────────
   function showToast(msg) {
     const t = document.getElementById('toast');
-    t.textContent = msg;
-    t.classList.add('show');
+    t.textContent = msg; t.classList.add('show');
     setTimeout(() => t.classList.remove('show'), 2800);
   }
 
-  // ─── HEADER DATE ─────────────────────────────────────────────────────────
-  function initHeader() {
-    const d = new Date();
-    document.getElementById('headerDate').textContent =
-      d.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-  }
-
   // ─── INIT ─────────────────────────────────────────────────────────────────
-  initHeader();
-  renderAll();
-  setInterval(renderCajones, 60000); // actualiza estado cada minuto
+  const d = new Date();
+  document.getElementById('headerDate').textContent =
+    d.toLocaleDateString('es-MX', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+  showLoading();
+  setInterval(renderCajones, 60000);
 </script>
 </body>
 </html>
