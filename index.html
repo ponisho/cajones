@@ -450,7 +450,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getFirestore, collection, addDoc, deleteDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
   // ─── FIREBASE ────────────────────────────────────────────────────────────
   const firebaseConfig = {
@@ -472,21 +472,36 @@
   let selectedDate = null;
   const cajonNames = { 1: 'C-1', 2: 'C-2', 3: 'C-3' };
 
-  // Escucha en tiempo real — cualquier cambio en Firestore actualiza la UI
-  const q = query(colRef, orderBy('fecha'), orderBy('desde'));
-  onSnapshot(q, (snapshot) => {
-    reservas = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderAll();
-    hideLoading();
-  }, (err) => {
-    console.error(err);
-    showToast('⚠️ Error al conectar con Firebase');
-    hideLoading();
-  });
-
   // ─── LOADING ─────────────────────────────────────────────────────────────
   function showLoading() { document.getElementById('loadingBar').style.opacity = '1'; }
   function hideLoading() { document.getElementById('loadingBar').style.opacity = '0'; }
+
+  // ─── TOAST (definido temprano para usarse en onSnapshot) ─────────────────
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2800);
+  }
+
+  // Escucha en tiempo real — cualquier cambio en Firestore actualiza la UI
+  // Sin orderBy para evitar requerir índice compuesto — ordenamos en JS
+  onSnapshot(colRef, (snapshot) => {
+    reservas = snapshot.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a,b) => a.fecha.localeCompare(b.fecha) || a.desde.localeCompare(b.desde));
+    renderAll();
+    hideLoading();
+  }, (err) => {
+    console.error('Firebase error:', err.code, err.message);
+    if (err.code === 'permission-denied') {
+      showToast('⚠️ Permisos de Firestore: activa modo prueba');
+    } else if (err.code === 'unavailable') {
+      showToast('⚠️ Sin conexión a internet');
+    } else {
+      showToast('⚠️ Error Firebase: ' + err.code);
+    }
+    hideLoading();
+  });
 
   // ─── DATE UTILS ──────────────────────────────────────────────────────────
   function today() { return toISO(new Date()); }
@@ -787,12 +802,7 @@
     if (document.getElementById('view-lista').classList.contains('active')) renderLista();
   }
 
-  // ─── TOAST ───────────────────────────────────────────────────────────────
-  function showToast(msg) {
-    const t = document.getElementById('toast');
-    t.textContent = msg; t.classList.add('show');
-    setTimeout(() => t.classList.remove('show'), 2800);
-  }
+  // ─── TOAST (definida arriba, cerca de onSnapshot) ───────────────────────
 
   // ─── INIT ─────────────────────────────────────────────────────────────────
   const d = new Date();
