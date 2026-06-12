@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Cajones" />
-  <title>Cajones · Residencial Bamb&uacute;</title>
+  <title>Cajones · Residencial</title>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     :root {
@@ -288,6 +288,54 @@
       cursor: pointer; transition: all 0.15s;
     }
     .admin-badge:active { opacity: 0.7; }
+
+    /* ADMIN PANEL */
+    .admin-panel {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 18px;
+      margin: 0 20px 16px; display: none; animation: slideIn 0.2s ease;
+    }
+    .admin-panel.open { display: block; }
+    .admin-panel-title {
+      font-size: 11px; font-weight: 600; color: var(--accent);
+      letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 14px;
+    }
+    .admin-actions { display: flex; flex-direction: column; gap: 10px; }
+    .admin-row { display: flex; gap: 8px; align-items: center; }
+    .admin-input {
+      width: 70px; background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); color: var(--text);
+      font-family: 'DM Sans', sans-serif; font-size: 14px;
+      padding: 10px; outline: none; text-align: center;
+      transition: border-color 0.15s; flex-shrink: 0;
+    }
+    .admin-input:focus { border-color: var(--accent); }
+    .admin-btn {
+      flex: 1; padding: 10px 12px; border-radius: var(--radius-sm);
+      border: none; font-family: 'DM Sans', sans-serif;
+      font-size: 13px; font-weight: 500; cursor: pointer;
+      transition: all 0.15s; display: flex; align-items: center; gap: 8px;
+    }
+    .admin-btn:active { transform: scale(0.97); }
+    .admin-btn.danger { background: #ff6b6b18; color: var(--accent3); border: 1px solid #ff6b6b30; }
+    .admin-btn.export { background: #5b8dff18; color: var(--accent2); border: 1px solid #5b8dff30; }
+    .admin-divider { height: 1px; background: var(--border); margin: 2px 0; }
+    .export-sheet {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 14px;
+      font-family: 'DM Mono', monospace; font-size: 12px; color: var(--text2);
+      line-height: 1.7; max-height: 200px; overflow-y: auto;
+      white-space: pre-wrap; margin-top: 8px; display: none;
+    }
+    .export-sheet.open { display: block; }
+    .export-copy-btn {
+      width: 100%; padding: 10px; border-radius: var(--radius-sm);
+      background: var(--accent2); border: none; color: #fff;
+      font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500;
+      cursor: pointer; margin-top: 8px; display: none;
+    }
+    .export-copy-btn.open { display: block; }
+
     .toast {
       position: fixed; top: 60px; left: 50%; transform: translateX(-50%) translateY(-20px);
       background: var(--surface2); border: 1px solid var(--border);
@@ -305,7 +353,7 @@
 <header>
   <div class="header-top">
     <div>
-      <div class="header-title">🅿️ Bamb&uacute; cajones</div>
+      <div class="header-title">🅿️ Cajones</div>
       <div class="header-date" id="headerDate"></div>
     </div>
     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;">
@@ -319,6 +367,34 @@
 <div class="status-section">
   <div class="section-label">Estado ahora</div>
   <div class="cajones-grid" id="cajonesGrid"></div>
+</div>
+
+<!-- ADMIN PANEL -->
+<div class="admin-panel" id="adminPanel">
+  <div class="admin-panel-title">⚙️ Panel de administrador</div>
+  <div class="admin-actions">
+
+    <div class="admin-row">
+      <input class="admin-input" id="purgeDays" type="number" min="1" value="30" />
+      <button class="admin-btn danger" onclick="purgeOldReservas()">
+        <span class="admin-btn-icon">🗑️</span>
+        Borrar reservas con más de N días
+      </button>
+    </div>
+
+    <div class="admin-divider"></div>
+
+    <div class="admin-row">
+      <input class="admin-input" id="exportDays" type="number" min="1" value="3" />
+      <button class="admin-btn export" onclick="exportReservas()">
+        <span class="admin-btn-icon">📋</span>
+        Exportar reservas de los próximos N días
+      </button>
+    </div>
+    <div class="export-sheet" id="exportSheet"></div>
+    <button class="export-copy-btn" id="exportCopyBtn" onclick="copyExport()">Copiar al portapapeles</button>
+
+  </div>
 </div>
 
 <!-- NAV TABS -->
@@ -700,9 +776,11 @@
       badge.style.cssText = 'background:#7ecfa418;border-color:#7ecfa440;color:#7ecfa4;';
       clearTimeout(adminTimer);
       adminTimer = setTimeout(() => { setAdminSession(false); showToast('Sesión admin cerrada'); }, ADMIN_TIMEOUT);
+      toggleAdminPanel(true);
     } else {
       badge.textContent = '🔒 Admin';
       badge.style.cssText = 'background:#e8c54718;border-color:#e8c54740;color:var(--accent);';
+      toggleAdminPanel(false);
     }
   }
 
@@ -750,7 +828,109 @@
     }
   }
 
-  // ─── DELETE ──────────────────────────────────────────────────────────────
+  // ─── ADMIN PANEL TOGGLE ─────────────────────────────────────────────────
+  function toggleAdminPanel(show) {
+    const panel = document.getElementById('adminPanel');
+    if (show) panel.classList.add('open');
+    else { panel.classList.remove('open'); closeExportSheet(); }
+  }
+
+  // ─── PURGE OLD RESERVAS ──────────────────────────────────────────────────
+  window.purgeOldReservas = function() {
+    const days = parseInt(document.getElementById('purgeDays').value);
+    if (!days || days < 1) { showToast('⚠️ Ingresa un número válido'); return; }
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    const cutoffISO = toISO(cutoff);
+
+    const toDelete = reservas.filter(r => r.fecha < cutoffISO);
+    if (toDelete.length === 0) {
+      showToast(`Sin reservas mayores a ${days} días`);
+      return;
+    }
+
+    openConfirmModal(
+      `¿Eliminar ${toDelete.length} reserva(s) con más de ${days} días?`,
+      async () => {
+        try {
+          showLoading();
+          await Promise.all(toDelete.map(r => deleteDoc(doc(db, 'reservas', r.id))));
+          showToast(`✓ ${toDelete.length} reserva(s) eliminadas`);
+        } catch(e) {
+          console.error(e);
+          showToast('⚠️ Error al eliminar');
+        } finally {
+          hideLoading();
+        }
+      }
+    );
+  };
+
+  // ─── EXPORT UPCOMING RESERVAS ────────────────────────────────────────────
+  window.exportReservas = function() {
+    const days = parseInt(document.getElementById('exportDays').value);
+    if (!days || days < 1) { showToast('⚠️ Ingresa un número válido'); return; }
+
+    const todayISO = today();
+    const endDate  = addDays(todayISO, days - 1);
+
+    const filtered = reservas
+      .filter(r => r.fecha >= todayISO && r.fecha <= endDate)
+      .sort((a,b) => a.fecha.localeCompare(b.fecha) || a.desde.localeCompare(b.desde));
+
+    const sheet = document.getElementById('exportSheet');
+    const copyBtn = document.getElementById('exportCopyBtn');
+
+    if (filtered.length === 0) {
+      sheet.textContent = 'Sin reservas en ese período.';
+      sheet.classList.add('open');
+      copyBtn.classList.remove('open');
+      return;
+    }
+
+    // Agrupar por fecha
+    const byDate = {};
+    filtered.forEach(r => {
+      if (!byDate[r.fecha]) byDate[r.fecha] = [];
+      byDate[r.fecha].push(r);
+    });
+
+    const cajonNames = { 1: 'C-1', 2: 'C-2', 3: 'C-3' };
+    let text = `📋 RESERVAS — PRÓXIMOS ${days} DÍA(S)\n`;
+    text += `━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+
+    Object.keys(byDate).sort().forEach(fecha => {
+      const d = parseDate(fecha);
+      const label = d.toLocaleDateString('es-MX', { weekday:'long', day:'numeric', month:'long' });
+      text += `\n📅 ${label.toUpperCase()}\n`;
+      byDate[fecha].forEach(r => {
+        text += `  ${cajonNames[r.cajon]}  ${r.vecino}  ${r.desde}–${r.hasta}`;
+        if (r.nota) text += `  (${r.nota})`;
+        text += '\n';
+      });
+    });
+
+    text += `\n━━━━━━━━━━━━━━━━━━━━━━━━━`;
+    sheet.textContent = text;
+    sheet.classList.add('open');
+    copyBtn.classList.add('open');
+    sheet._exportText = text;
+  };
+
+  window.copyExport = function() {
+    const sheet = document.getElementById('exportSheet');
+    navigator.clipboard.writeText(sheet._exportText || sheet.textContent)
+      .then(() => showToast('✓ Copiado al portapapeles'))
+      .catch(() => showToast('⚠️ No se pudo copiar'));
+  };
+
+  function closeExportSheet() {
+    document.getElementById('exportSheet').classList.remove('open');
+    document.getElementById('exportCopyBtn').classList.remove('open');
+  }
+
+  // ─── DELETE ──────────────────────────────────────────────────────────────────
   window.deleteReserva = function(id) {
     if (!isAdmin) {
       openPinModal(() => setTimeout(() => window.deleteReserva(id), 200));
